@@ -8,76 +8,71 @@ resource "aws_ecs_cluster" "this" {
   tags = local.tags
 }
 
-resource "aws_ecs_service" "this" {
-  name            = "ecsworker-external-service"
+resource "aws_ecs_service" "external" {
+  name            = "${local.name}-external"
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.task.arn
-  desired_count   = 4
+  desired_count   = 0
   launch_type     = "EXTERNAL"
-  tags = local.tags
+  # capacity_provider_strategy {
+  #   base = 0
+  #   capacity_provider = aws_ecs_capacity_provider.external.name
+  #   weight = 100
+  # }
+  tags            = local.tags
 }
 
 resource "aws_ecs_service" "ec2" {
-  name            = "${local.name}-ec2-service"
+  name            = "${local.name}-ec2"
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.task.arn
-  desired_count   = 2
+  desired_count   = 4
   launch_type     = "EC2"
-  tags = local.tags
+  # capacity_provider_strategy {
+  #   base = 4
+  #   capacity_provider = aws_ecs_capacity_provider.ec2.name
+  #   weight = 100
+  # }
+  tags            = local.tags
 }
 
-
-data "aws_iam_policy_document" "ecs_tasks_execution_role" {
-  statement {
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["ecs-tasks.amazonaws.com"]
+resource "aws_ecs_capacity_provider" "ec2" {
+  name = "capacityprovider_${aws_autoscaling_group.this.name}"
+  # The name cannot be prefixed with "aws", "ecs", or "fargate" whatevs
+  auto_scaling_group_provider {
+    auto_scaling_group_arn         = aws_autoscaling_group.this.arn
+    managed_termination_protection = "ENABLED"
+    managed_scaling {
+      maximum_scaling_step_size = 10
+      minimum_scaling_step_size = 1
+      status                    = "ENABLED"
+      target_capacity           = local.target_capacity
     }
   }
 }
 
-resource "aws_iam_role" "ecs_tasks_execution_role" {
-  name               = "${local.name}-ecs-task-execution-role"
-  assume_role_policy = "${data.aws_iam_policy_document.ecs_tasks_execution_role.json}"
-}
-
-resource "aws_iam_role_policy_attachment" "ecs_tasks_execution_role" {
-  role       = "${aws_iam_role.ecs_tasks_execution_role.name}"
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-}
-
-resource "aws_iam_role" "ecs_tasks_role" {
-  name               = "${local.name}-ecs-task-role"
-  assume_role_policy = "${data.aws_iam_policy_document.ecs_tasks_execution_role.json}"
-  inline_policy {}
-}
-
-
-
-
-data "aws_iam_policy_document" "ssm_trust" {
-  statement {
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["ssm.amazonaws.com"]
+resource "aws_ecs_capacity_provider" "external" {
+  name = "capacityprovider_${aws_autoscaling_group.this.name}"
+  # The name cannot be prefixed with "aws", "ecs", or "fargate" whatevs
+  auto_scaling_group_provider {
+    auto_scaling_group_arn         = aws_autoscaling_group.this.arn
+    managed_termination_protection = "ENABLED"
+    managed_scaling {
+      maximum_scaling_step_size = 2
+      minimum_scaling_step_size = 1
+      status                    = "ENABLED"
+      target_capacity           = local.target_capacity
     }
   }
 }
 
-resource "aws_iam_role" "ecs_anywhere_role" {
-  name               = "${local.name}-ecs-anywhere-role"
-  assume_role_policy = "${data.aws_iam_policy_document.ssm_trust.json}"
-}
 
-resource "aws_iam_role_policy_attachment" "anywhere-ssm" {
-  role       = "${aws_iam_role.ecs_anywhere_role.name}"
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-resource "aws_iam_role_policy_attachment" "anywhere-container" {
-  role       = "${aws_iam_role.ecs_anywhere_role.name}"
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
+resource "aws_ecs_cluster_capacity_providers" "this" {
+  cluster_name       = aws_ecs_cluster.this.name
+  capacity_providers = [aws_ecs_capacity_provider.ec2.name, aws_ecs_capacity_provider.external.name]
+  default_capacity_provider_strategy {
+    base              = 1
+    weight            = 100
+    capacity_provider = aws_ecs_capacity_provider.ec2.name
+  }
 }
